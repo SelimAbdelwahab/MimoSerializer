@@ -1,4 +1,4 @@
-# The JSON implementation will live here; its only library dependency is common.
+# Placeholder for JSON serialization.
 add_library(MimoSerializerJson INTERFACE)
 add_library(Mimo::Serializer::Json ALIAS MimoSerializerJson)
 

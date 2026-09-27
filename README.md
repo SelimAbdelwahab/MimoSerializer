@@ -30,7 +30,7 @@ it:
 mimo::serializer::xml::XmlArchive::registerAnyType<MyType>("my-type");
 ```
 
-Consumers that use CMake can link the interface target:
+Link the CMake target:
 
 ```cmake
 target_link_libraries(your_target PRIVATE Mimo::Serializer::Xml)
@@ -46,7 +46,8 @@ common/
   tests/
 xml/
   CMakeLists.txt
-  include/Mimo/XmlSerializer/  # XML serializer
+  include/Mimo/Serializer/  # XML serializer
+  include/Mimo/Xml/         # XML writer and escaping
   src/
   tests/
 json/
@@ -55,15 +56,12 @@ json/
   src/
 ```
 
-Each module exposes an interface target: `Mimo::Serializer::Common`,
-`Mimo::Serializer::Xml`, and `Mimo::Serializer::Json`. XML and JSON each depend
-only on Common, which supplies shared headers and compiler requirements.
-Neither format depends on the other. JSON is currently a placeholder target;
-no JSON serialization API is implemented yet. The libraries remain header-only,
-so the `src/` directories are reserved for future compiled implementation files.
+The header-only CMake targets are `Mimo::Serializer::Common`,
+`Mimo::Serializer::Xml`, and `Mimo::Serializer::Json`. XML and JSON depend only
+on Common for shared headers and compiler settings. JSON is a placeholder
+with no serialization API yet. The `src/` directories are unused.
 
-Shared reflection helpers can be included through
-`<Mimo/Serializer/Reflection.hpp>` without depending on XML.
+Include `<Mimo/Serializer/Reflection.hpp>` to use reflection without XML.
 
 ## Building the tests
 

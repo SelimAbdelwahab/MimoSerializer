@@ -27,4 +27,4 @@ struct AttributeString {
 template <std::size_t N>
 AttributeString(const char (&)[N]) -> AttributeString<N>;
 
-} // namespace Mimo::XmlSerializer::Attributes::Detail
+} // namespace mimo::serializer::attributes::detail
