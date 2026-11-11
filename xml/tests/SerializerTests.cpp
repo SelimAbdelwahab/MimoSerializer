@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 
-#include <any>
 #include <optional>
 #include <string>
 #include <variant>
@@ -189,30 +188,58 @@ TEST(SerializerXml, SerializesVariantWithAlternativeDiscriminator)
         "</VariantExample>\n");
 }
 
-struct AnyExample
+namespace
 {
-    std::any primitive = std::string("hello");
-    std::any object = Nested{10};
-    std::any empty;
+struct XmlMetadataTag { int value; };
+
+struct [[=XmlMetadataTag{1}]] XmlAnnotatedObject
+{
+    [[=XmlMetadataTag{2}]] int number = 3;
 };
 
-TEST(SerializerXml, SerializesAnyWithRegisteredTypeDiscriminator)
+class MetadataAwareXmlArchive : public mimo::serializer::OutputArchive<MetadataAwareXmlArchive>
 {
-    mimo::serializer::xml::XmlArchive::registerAnyType<Nested>("nested");
+public:
+    int rootTag = 0;
+    int memberTag = 0;
 
-    EXPECT_EQ(mimo::serializer::xml::serialize(AnyExample{}),
-        "<AnyExample>\n"
-        "    <primitive type=\"string\">hello</primitive>\n"
-        "    <object type=\"nested\">\n"
-        "        <test>10</test>\n"
-        "    </object>\n"
-        "</AnyExample>\n");
+    auto objectImpl(const mimo::serializer::NodeMetadata& metadata)
+    {
+        if (const auto* tag = metadata.getAnnotation<XmlMetadataTag>())
+            rootTag = tag->value;
+        return m_archive.object(metadata);
+    }
+
+    template <typename T>
+    void valueImpl(const mimo::serializer::NodeMetadata& metadata, const T& value)
+    {
+        if (const auto* tag = metadata.getAnnotation<XmlMetadataTag>())
+            memberTag = tag->value;
+        m_archive.value(metadata, value);
+    }
+
+    auto sequenceImpl(mimo::serializer::NodeMetadata metadata)
+    {
+        return m_archive.sequence(metadata);
+    }
+
+    void emptyImpl(mimo::serializer::NodeMetadata metadata) { m_archive.empty(metadata); }
+    std::string finalize() const { return m_archive.finalize(); }
+
+private:
+    mimo::serializer::xml::XmlArchive m_archive;
+
+};
 }
 
-TEST(SerializerXml, RejectsUnregisteredAnyTypes)
+TEST(SerializerXml, CustomArchiveCanReadRootAndMemberAnnotations)
 {
-    EXPECT_THROW(
-        static_cast<void>(
-            mimo::serializer::xml::serialize(std::any{double{1.5}})),
-        std::runtime_error);
+    MetadataAwareXmlArchive archive;
+    mimo::serializer::serializeNode(archive, XmlAnnotatedObject{}, {.name = "root"});
+    EXPECT_EQ(archive.rootTag, 1);
+    EXPECT_EQ(archive.memberTag, 2);
+    EXPECT_EQ(archive.finalize(),
+        "<root>\n"
+        "    <number>3</number>\n"
+        "</root>\n");
 }

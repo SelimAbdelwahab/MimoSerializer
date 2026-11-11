@@ -1,126 +1,47 @@
 #pragma once
 
-#include <any>
-#include <meta>
-#include <mutex>
+#include <format>
 #include <string>
-#include <string_view>
-#include <typeindex>
-#include <unordered_map>
-#include <utility>
+#include <type_traits>
 
-#include <Mimo/Serializer/Reflection.hpp>
+#include <Mimo/Serializer/SerializeNode.hpp>
 
 #include "Mimo/Xml/XmlWriter.hpp"
 
 namespace mimo::serializer::xml
 {
 
-class XmlArchive
+class XmlArchive : public OutputArchive<XmlArchive>
 {
 public:
-    template <typename T>
-    void value(const NodeMetadata& metadata, const T& value)
-    {
-        auto scope = beginNode(metadata);
-        m_writer.value(std::format("{}", value));
-    }
-
-    XmlWriter::Scope object(const NodeMetadata& metadata)
-    {
-        return beginNode(metadata);
-    }
-
-    XmlWriter::Scope sequence(const NodeMetadata& metadata)
-    {
-        return beginNode(metadata);
-    }
-
-    XmlWriter::Scope empty(const NodeMetadata& metadata)
-    {
-        return beginNode(metadata);
-    }
-
-    void any(NodeMetadata metadata, const std::any& value)
-    {
-        if (writeBuiltinAny<bool>(metadata, value)
-            || writeBuiltinAny<int>(metadata, value)
-            || writeBuiltinAny<float>(metadata, value)
-            || writeBuiltinAny<std::string>(metadata, value))
-        {
-            return;
-        }
-
-        AnyType entry;
-        {
-            std::scoped_lock lock(anyTypesMutex());
-            const auto iterator = anyTypes().find(std::type_index(value.type()));
-            if (iterator == anyTypes().end())
-            {
-                throw std::runtime_error(std::format(
-                    "No XML serializer is registered for std::any type '{}'.",
-                    value.type().name()));
-            }
-            entry = iterator->second;
-        }
-
-        metadata.typeDiscriminator = entry.discriminator;
-        entry.write(*this, metadata, value);
-    }
-
-    template <typename T>
-    static void registerAnyType(std::string discriminator)
-    {
-        AnyType entry{
-            .discriminator = std::move(discriminator),
-            .write = [](XmlArchive& archive,
-                        NodeMetadata metadata,
-                        const std::any& value)
-            {
-                serializeNode(
-                    archive,
-                    std::any_cast<const T&>(value),
-                    metadata);
-            },
-        };
-
-        std::scoped_lock lock(anyTypesMutex());
-        anyTypes().insert_or_assign(std::type_index(typeid(T)), std::move(entry));
-    }
-
     [[nodiscard]]
     std::string finalize() const
     {
         return m_writer.toString();
     }
 private:
-    struct AnyType
-    {
-        std::string discriminator;
-        void (*write)(XmlArchive&, NodeMetadata, const std::any&){};
-    };
+    friend class mimo::serializer::OutputArchive<XmlArchive>;
 
     template <typename T>
-    bool writeBuiltinAny(NodeMetadata metadata, const std::any& value)
+    void valueImpl(const NodeMetadata& metadata, const T& value)
     {
-        if (value.type() != typeid(T))
-            return false;
-
-        metadata.typeDiscriminator = TypeDiscriminator<T>::value;
-        serializeNode(*this, std::any_cast<const T&>(value), metadata);
-        return true;
+        auto scope = beginNode(metadata);
+        m_writer.value(std::format("{}", value));
     }
 
-    static std::unordered_map<std::type_index, AnyType>& anyTypes()
+    XmlWriter::Scope objectImpl(const NodeMetadata& metadata)
     {
-        static std::unordered_map<std::type_index, AnyType> types;
-        return types;
+        return beginNode(metadata);
     }
 
-    static std::mutex& anyTypesMutex()
+    XmlWriter::Scope sequenceImpl(const NodeMetadata& metadata)
     {
-        static std::mutex mutex;
-        return mutex;
+        return beginNode(metadata);
+    }
+
+    void emptyImpl(const NodeMetadata& metadata)
+    {
+        auto scope = beginNode(metadata);
     }
 
     XmlWriter::Scope beginNode(const NodeMetadata& metadata)

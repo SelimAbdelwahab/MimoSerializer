@@ -21,7 +21,8 @@ endif()
 
 if(MIMO_SERIALIZER_BUILD_TESTS)
     add_executable(MimoSerializerCommonTests tests/TypesTests.cpp
-            tests/ReflectionTests.cpp)
+            tests/AnnotationMetadataTests.cpp
+            tests/DeserializeNodeTests.cpp)
     set_target_properties(MimoSerializerCommonTests PROPERTIES CXX_EXTENSIONS OFF)
     target_link_libraries(MimoSerializerCommonTests PRIVATE
         Mimo::Serializer::Common GTest::gtest_main)

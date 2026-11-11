@@ -22,14 +22,6 @@ discriminator for their active alternative.
 </Example>
 ```
 
-`std::any` supports `bool`, `int`, `float`, and `std::string` automatically.
-Register every other payload type with a stable discriminator before serializing
-it:
-
-```cpp
-mimo::serializer::xml::XmlArchive::registerAnyType<MyType>("my-type");
-```
-
 Link the CMake target:
 
 ```cmake
@@ -62,6 +54,37 @@ on Common for shared headers and compiler settings. JSON is a placeholder
 with no serialization API yet. The `src/` directories are unused.
 
 Include `<Mimo/Serializer/Reflection.hpp>` to use reflection without XML.
+This umbrella header includes `NodeMetadata.hpp` for names, discriminators,
+and annotations, and `SerializeNode.hpp` /
+`DeserializeNode.hpp` for archive traversal. Each can also be included directly.
+
+Archives can inspect C++ annotations through `metadata.getAnnotation<A>()` and
+`metadata.hasAnnotation<A>()`. Member or caller-supplied annotations override
+type annotations. Optional and variant payloads retain member annotations and
+use the active value type for fallback; sequence items get their own metadata.
+`AnnotationView.hpp` supplies the lookup used by `NodeMetadata`, backed by
+static annotation tables rather than a runtime tree.
+Exposing annotations does not itself apply renaming, skipping, or validation;
+those behaviors must be implemented by the traversal or archive.
+
+Custom output archives derive from `OutputArchive<MyArchive>` and implement
+`valueImpl`, `objectImpl`, `sequenceImpl`, and `emptyImpl`. The base checks all
+primitive overloads and scope requirements when construction is compiled.
+`serializeNode` accepts `OutputArchive<Derived>&`, with the archive type deduced
+automatically. To wrap an existing archive, use composition so the CRTP base
+dispatches to the wrapper's hooks. `XmlArchive` implements this output contract.
+
+`deserializeNode(archive, destination, metadata)` reads primitives, reflected
+members, vectors, optionals, and variants through an input archive. Missing
+optionals reset, vectors replace their contents, and variants require a unique
+type discriminator. Objects update in place; a failed read can leave earlier
+members updated. Custom input archives derive from `InputArchive<MyArchive>` and
+implement the six `*Impl` hooks documented in `InputArchive.hpp`. The base checks
+all hook signatures when an archive is constructed, including primitive overloads
+and scope requirements. `deserializeNode` accepts an `InputArchive<Derived>&`;
+the concrete archive type is deduced automatically. Both the CRTP contract and
+concept checks are enforced at compile time.
+XML parsing and the concrete XML input archive are not implemented yet.
 
 ## Building the tests
 
