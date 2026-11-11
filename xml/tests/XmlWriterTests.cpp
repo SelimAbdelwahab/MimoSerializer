@@ -94,9 +94,9 @@ TEST(XmlWriter, RejectsChildrenAfterTextWithoutChangingTree)
         auto root = writer.scope("root");
         writer.value("text");
         EXPECT_THROW({ auto child = writer.scope("child"); }, ClashingWrite);
-        writer.attribute("id", "1");
+        EXPECT_THROW(writer.attribute("id", "1"), std::runtime_error);
     }
-    EXPECT_EQ(writer.toString(), "<root id=\"1\">text</root>\n");
+    EXPECT_EQ(writer.toString(), "<root>text</root>\n");
 }
 
 TEST(XmlWriter, RejectsTextAfterChildrenWithoutChangingTree)
@@ -145,11 +145,53 @@ TEST(XmlWriter, ClosesScopesDuringExceptionUnwinding)
     XmlWriter writer;
     {
         auto root = writer.scope("root");
+        writer.attribute("id", "1");
         EXPECT_THROW({
             auto child = writer.scope("child");
             throw std::runtime_error("test");
         }, std::runtime_error);
-        writer.attribute("id", "1");
     }
     EXPECT_EQ(writer.toString(), "<root id=\"1\">\n    <child />\n</root>\n");
+}
+
+TEST(XmlWriter, RejectsAttributesAfterChildren)
+{
+    XmlWriter writer;
+    {
+        auto root = writer.scope("root");
+        { auto child = writer.scope("child"); }
+        EXPECT_THROW(writer.attribute("id", "1"), std::runtime_error);
+    }
+    EXPECT_EQ(writer.toString(), "<root>\n    <child />\n</root>\n");
+}
+
+TEST(XmlWriter, RejectsRepeatedValues)
+{
+    XmlWriter writer;
+    {
+        auto root = writer.scope("root");
+        writer.value("first");
+        EXPECT_THROW(writer.value("second"), std::runtime_error);
+    }
+    EXPECT_EQ(writer.toString(), "<root>first</root>\n");
+}
+
+TEST(XmlWriter, SnapshotsOpenScopesWithoutClosingThem)
+{
+    XmlWriter writer;
+    {
+        auto root = writer.scope("root");
+        EXPECT_EQ(writer.toString(), "<root />\n");
+        writer.attribute("id", "1");
+        {
+            auto child = writer.scope("child");
+            EXPECT_EQ(writer.toString(),
+                "<root id=\"1\">\n    <child />\n</root>\n");
+            writer.value("text");
+            EXPECT_EQ(writer.toString(),
+                "<root id=\"1\">\n    <child>text</child>\n</root>\n");
+        }
+    }
+    EXPECT_EQ(writer.toString(),
+        "<root id=\"1\">\n    <child>text</child>\n</root>\n");
 }

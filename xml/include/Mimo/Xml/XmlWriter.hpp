@@ -1,12 +1,12 @@
 #pragma once
-#include <stack>
-#include <format>
-#include <string>
-#include <sstream>
-#include <stdexcept>
-#include <utility>
 
-#include "XmlAuthor.hpp"
+#include <format>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
 #include "XmlEscaping.hpp"
 
 namespace mimo::serializer::xml
@@ -39,37 +39,41 @@ public:
 class XmlWriter
 {
 public:
+    XmlWriter() = default;
     XmlWriter(const XmlWriter&) = delete;
     XmlWriter& operator=(const XmlWriter&) = delete;
-
     XmlWriter(XmlWriter&&) = delete;
     XmlWriter& operator=(XmlWriter&&) = delete;
 
-    explicit XmlWriter() : m_dummy({})
+    // Attributes must precede text or child elements.
+    void attribute(std::string_view name, std::string_view value)
     {
-        m_stack.push(&m_dummy);
+        auto& current = currentElement();
+        if (current.content != Content::pending)
+            throw std::runtime_error("Attributes must precede element content.");
+
+        m_output += ' ';
+        m_output.append(name);
+        m_output += "=\"";
+        detail::appendEscaped(m_output, value, true);
+        m_output += '"';
     }
 
-    void attribute(const std::string_view name, const std::string_view value)
+    void value(std::string_view value)
     {
-        if (atDummyLevel())
-            throw std::runtime_error("Attempting to add attribute before starting element.");
+        auto& current = currentElement();
+        if (current.content == Content::children)
+            throw ClashingWrite::hasChildren(current.name);
+        if (current.content == Content::text)
+            throw std::runtime_error("Element already has a value.");
 
-        Element* current = m_stack.top();
-        current->attributes.emplace_back(std::string(name), std::string(value));
-    }
-
-    void value(const std::string_view value)
-    {
-        if (atDummyLevel())
-            throw std::runtime_error("Attempting to set value before starting element.");
-
-        Element* current = m_stack.top();
-
-        if (auto pVec = std::get_if<std::vector<Element>>(&current->value); pVec != nullptr && !pVec->empty())
-            throw ClashingWrite::hasChildren(current->name);
-
-        current->value = std::string(value);
+        current.content = Content::text;
+        current.hasText = !value.empty();
+        if (current.hasText)
+        {
+            m_output += '>';
+            detail::appendEscaped(m_output, value);
+        }
     }
 
     class Scope
@@ -81,7 +85,7 @@ public:
         Scope& operator=(const Scope&) = delete;
         Scope& operator=(Scope&&) = delete;
 
-        Scope(XmlWriter& writer, const std::string_view name)
+        Scope(XmlWriter& writer, std::string_view name)
             : m_writer(writer)
         {
             writer.startElement(name);
@@ -100,109 +104,80 @@ public:
         }
     };
 
-    [[nodiscard]]
-    auto scope(const std::string_view name)
+    [[nodiscard]] auto scope(std::string_view name)
     {
         return Scope(*this, name);
     }
 
-    [[nodiscard]]
-    std::string toString() const
+    // Return a complete snapshot, including any currently open scopes.
+    [[nodiscard]] std::string toString() const
     {
-        if (std::holds_alternative<std::string>(m_dummy.value))
-            return "";
-
-        std::ostringstream stream;
-        for (auto& element : std::get<std::vector<Element>>(m_dummy.value))
-            writeElement(stream, element);
-
-        return stream.str();
+        auto output = m_output;
+        for (std::size_t depth = m_stack.size(); depth > 0; --depth)
+            closeElement(output, m_stack[depth - 1], depth - 1);
+        return output;
     }
+
 private:
+    enum class Content { pending, text, children };
 
-    static void writeElement(std::ostream& stream, const Element& element, std::size_t indent=0)
+    struct Frame
     {
-        const auto indentation = std::format("{:>{}}", "", indent);
-        stream << std::format("{}<{}", indentation, element.name);
+        std::string name;
+        Content content = Content::pending;
+        bool hasText = false;
+    };
 
-        bool hasAttributes = !element.attributes.empty();
-        if (hasAttributes)
-            stream << " " << writeAttributes(element);
-
-        switch (element.elementType())
-        {
-            case Element::empty:
-                stream << " />\n";
-                break;
-            case Element::field:
-                stream << ">";
-                detail::writeEscaped(stream, std::get<std::string>(element.value));
-                stream << "</" << element.name << ">\n";
-                break;
-            case Element::complex:
-                stream << ">\n";
-                for (auto& child : std::get<std::vector<Element>>(element.value))
-                    writeElement(stream, child, indent + 4u);
-
-                stream << indentation;
-                stream << std::format("</{}>\n", element.name);
-                break;
-            default:
-                throw std::runtime_error("Unknown element type.");
-        }
+    Frame& currentElement()
+    {
+        if (m_stack.empty())
+            throw std::runtime_error("Attempting to write before starting element.");
+        return m_stack.back();
     }
 
-    static std::string writeAttributes(const Element& element)
+    static void closeElement(std::string& output, const Frame& frame,
+                             std::size_t depth)
     {
-        std::ostringstream stream;
-        std::size_t sz = element.attributes.size();
-
-        for (std::size_t i = 0; i < sz; i++)
+        if (frame.content != Content::children && !frame.hasText)
         {
-            const auto& attribute = element.attributes[i];
-            stream << attribute.name << "=\"";
-            detail::writeEscaped(stream, attribute.value, true);
-            stream << '"';
-
-            if (i == sz - 1)
-                break;
-
-            stream << " ";
+            output += " />\n";
+            return;
         }
 
-        return stream.str();
+        if (frame.content == Content::children)
+            output.append(depth * 4, ' ');
+        output += "</";
+        output += frame.name;
+        output += ">\n";
     }
 
-    void startElement(const std::string_view name)
+    void startElement(std::string_view name)
     {
-        Element* current = m_stack.top();
-
-        if (!std::holds_alternative<std::vector<Element>>(current->value))
+        // Own the name before stack growth can invalidate references.
+        Frame next{.name = std::string(name)};
+        if (!m_stack.empty())
         {
-            if (!std::get<std::string>(current->value).empty())
-                throw ClashingWrite::hasValue(current->name);
-
-            current->value = std::vector<Element>();
+            auto& parent = m_stack.back();
+            if (parent.hasText)
+                throw ClashingWrite::hasValue(parent.name);
+            if (parent.content != Content::children)
+                m_output += ">\n";
+            parent.content = Content::children;
         }
 
-        m_stack.push(&std::get<std::vector<Element>>(current->value).emplace_back(name));
+        m_output.append(m_stack.size() * 4, ' ');
+        m_output += '<';
+        m_output += next.name;
+        m_stack.push_back(std::move(next));
     }
 
     void endElement()
     {
-        if (atDummyLevel())
-            throw std::runtime_error("Attempting to end element before starting element.");
-
-        m_stack.pop();
+        closeElement(m_output, m_stack.back(), m_stack.size() - 1);
+        m_stack.pop_back();
     }
 
-    [[nodiscard]]
-    bool atDummyLevel() const
-    {
-        return m_stack.size() == 1;
-    }
-
-    Element m_dummy;
-    std::stack<Element*> m_stack;
+    std::string m_output;
+    std::vector<Frame> m_stack;
 };
 }
